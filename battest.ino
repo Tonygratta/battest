@@ -1,23 +1,23 @@
 #define A_PIN 1
 #define NUM_READS 100
-#define pinRelay 7
-#define pinCharge 6
-#define pinBlink 13
-#define COND 496   // проводимость шунта в мСм, =1000/Rш
-#define VBG 1.095  // 1.0 -- 1.2 опорное
-#define CCURR 180  //Ток зарядки
-#define DV 0.006   //вольт от максимума считаются новым максимумом
-#define THRES 1.9  //предельное напряжение при зарядке, выше которого заряд прекращается
+#define pinRelay 7 // pin for discharger
+#define pinCharge 6 // pin for charger
+#define pinBlink 13 // pin for blinker
+#define COND 496   // Shunt conductivity (mS), =1000/Rshunt. Defines by hardware.
+#define VBG 1.095  // Real reference voltage. Defines by hardware.
+#define CCURR 180  // Charge current. Defines by hardware.
+#define DV 0.006   // Delta voltage for voltage peak detection, less=better but more sensitive to ADC noise
+#define THRES 1.9  // Charging threshold, Volts (charging stops when cell voltage exceeds the value)
 
 bool charging;
-float Voff = 0.8;  // напряжение выключения
+float Voff = 0.8;  // Voltage when discharging ends.
 float I;
 float deltacap;
 float cap = 0;
 float V;
 float Vcc;
 float Wh = 0;
-float chp[3] = { 0.0 };
+float chp[3] = { 0.0 }; // Charge-discharge parameters
 float Ri;
 float Ristart;
 unsigned long prevMillis;
@@ -36,11 +36,11 @@ void setup() {
 }
 
 void loop() {
-  //Начинаем заряд
+  // Start charging...
   digitalWrite(pinCharge, HIGH);
   delay(4);
   if (((analogRead(A_PIN) * 5.0) / 1024.0) > THRES) {
-    Serial.println("No battery");  //Напряжение резко выросло, видимо батарея не подключена или неисправна.
+    Serial.println("No or bad battery");  //ERROR Voltage beyond threshold. Charging will be stopped.
   } else {
     Serial.println("Charging. Press a key to start the test or wait for 16 hours");
     brkDlyCh(57600000);
@@ -55,7 +55,7 @@ void loop() {
   Ristart = measureRi(5);
   Ri = Ristart;
   sendRi(Ristart);
-  //Старт разряда
+  // Discharging...
   digitalWrite(pinRelay, HIGH);
   charging = true;
   Serial.println("Test is launched...");
@@ -65,28 +65,25 @@ void loop() {
   prevMillis = testStart;
   offTime = 0;
   do {
-    Vcc = (VBG * 1024.0) / readAnalog(-1);     //считывание опорного напряжения
-    V = (readAnalog(A_PIN) * Vcc) / 1024.000;  //считывание напряжения АКБ
-    //if (V > 0.01) I = -13.1 * V * V + 344.3 * V + 23.2;  //расчет тока по ВАХ спирали
-    //else I = 0;
-    I = COND * V;
+    Vcc = (VBG * 1024.0) / readAnalog(-1);     // Get reference voltage
+    V = (readAnalog(A_PIN) * Vcc) / 1024.000;  // Get cell voltage
+    I = COND * V; //current calculating
     deltacap = I * (millis() - prevMillis - offTime) / 3600000000;
     prevMillis = millis();
     offTime = 0;
-    cap += deltacap * 1000;  //расчет емкости АКБ в мАч
-    Wh += deltacap * V;      //расчет емкости АКБ в ВтЧ
-    Ri = measureRi(1);
+    cap += deltacap * 1000;  // Accumulated cell capacity mAh
+    Wh += deltacap * V;      // Accumulated cell capacity Wh
+    Ri = measureRi(1); // Cell internal resistance
 
-    sendData(prevMillis - testStart);  // отправка данных в последовательный порт
-  } while (V > Voff);
-  //выключение нагрузки при достижении порогового напряжения
+    sendData(prevMillis - testStart);  // Sending data to terminal
+  } while (V > Voff); //Do discharging while cell voltage exceeds Voff
   digitalWrite(pinRelay, LOW);
   charging = false;
   Serial.println("Test is done");
   serFlush();
-  //Закончили тест, ожидаем считывания результата
+  // End of testing.
   while (true) {
-    //Есть запрос - печатаем результат
+    // Print result to terminal by key strike...
     if (Serial.available()) {
       Serial.println("s V mA mAh Wh Ri");
       sendData(prevMillis - testStart);
@@ -94,7 +91,7 @@ void loop() {
       sendRi(Ristart);
       serFlush();
     }
-    //Выводим данные измерений на мигалку
+    // Blinker processing
     blink((int)(cap / 100));
   }
 }
@@ -238,13 +235,19 @@ void brkDly(unsigned long time) {
 }
 
 void brkDlyCh(unsigned long time) {
+	// Discharge control.
+	// Process breaks after 'time' millisecs
+	// or if the voltage reaches THRES
+	// also gets some statistics about process
+	// (time when cell voltage reaches its maximum
+	// and maximum voltage value)
   unsigned long dlyStart = millis();
   serFlush();
   while (millis() - dlyStart < time) {
-    Vcc = (VBG * 1024.0) / readAnalog(-1);  //считывание опорного напряжения
+    Vcc = (VBG * 1024.0) / readAnalog(-1);  // Gets reference voltage
     if (Serial.available()) break;
-    V = (readAnalog(A_PIN) * Vcc) / 1024.000;  //считывание напряжения АКБ
-    if (V > THRES) break;                      //Аккумулятор не подключен или очень плох.
+    V = (readAnalog(A_PIN) * Vcc) / 1024.000;  // Get cell voltage
+    if (V > THRES) break;                      // ERROR Voltage beyond threshold.
     if (V - chp[1] >= DV) {
       chp[1] = V;
       chp[0] = (millis() - dlyStart) / 1000;
