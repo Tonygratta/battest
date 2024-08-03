@@ -235,7 +235,7 @@ void brkDly(unsigned long time) {
 }
 
 void brkDlyCh(unsigned long time) {
-	// Discharge control.
+	//Charge control.
 	// Process breaks after 'time' millisecs
 	// or if the voltage reaches THRES
 	// also gets some statistics about process
